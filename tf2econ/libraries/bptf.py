@@ -205,28 +205,32 @@ class ListingFilter:
         return l
         
 
-def GetListings(name, quality, uncraft = False, ks_tier = 0):
-    i = 0
+def GetListings(name, quality, uncraft = False, ks_tier = 0, quick = False):
     results = {"buy":[],"sell":[]}
-    while True:
-        raw = fetch(name,quality,uncraft,ks_tier, page_num=i)
-        if not raw["buy"]["listings"] and not raw["sell"]["listings"]:
-            return results
-        essential_keys = ["id","steamid","details","item","created"]
+    if quick:
+        raw = fetch(name,quality,uncraft,ks_tier)
+    else:
+        i = 0
+        while True:
+            raw = fetch(name,quality,uncraft,ks_tier, page_num=i)
+            i += 1
+            if not raw["buy"]["listings"] and not raw["sell"]["listings"]:
+                break
+    essential_keys = ["id","steamid","details","item","created"]
 
-        raw_buys = raw["buy"]["listings"]
-        for b in raw_buys:
-            buy = {eskey : b[eskey] for eskey in essential_keys if eskey in b}
-            buy["isBot"] = bool(b.get("automatic", False))
-            buy["price"] = NormalizeCurrency(b.get("currencies"))
-            buy["lastBump"] = calc_timedelta(b["created"], b["bump"])
-            results["buy"].append(buy)
-        
-        raw_sells = raw["sell"]["listings"]
-        for s in raw_sells:
-            sell = {eskey : s[eskey] for eskey in essential_keys if eskey in s}
-            sell["isBot"] = bool(s.get("automatic", False))
-            sell["price"] = NormalizeCurrency(s.get("currencies"))
-            sell["lastbump"] = calc_timedelta(s["created"], s["bump"])
-            results["sell"].append(sell)
-        i += 1
+    raw_buys = raw["buy"]["listings"]
+    for b in raw_buys:
+        buy = {eskey : b[eskey] for eskey in essential_keys if eskey in b}
+        buy["isBot"] = bool(b.get("automatic", False))
+        buy["price"] = NormalizeCurrency(b.get("currencies"))
+        buy["lastBump"] = calc_timedelta(b["created"], b["bump"])
+        results["buy"].append(buy)
+    
+    raw_sells = raw["sell"]["listings"]
+    for s in raw_sells:
+        sell = {eskey : s[eskey] for eskey in essential_keys if eskey in s}
+        sell["isBot"] = bool(s.get("automatic", False))
+        sell["price"] = NormalizeCurrency(s.get("currencies"))
+        sell["lastbump"] = calc_timedelta(s["created"], s["bump"])
+        results["sell"].append(sell)
+    return results

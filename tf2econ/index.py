@@ -13,6 +13,7 @@ app.layout = html.Div([
         children=[
             dbc.NavItem(dbc.NavLink("Home", href="/")),
             dbc.NavItem(dbc.NavLink("Refresh", href="/fetcher")),
+            dbc.NavItem(dbc.NavLink("Paint", href="/painter")),
         ],
         brand="My Finance App",
     ),
