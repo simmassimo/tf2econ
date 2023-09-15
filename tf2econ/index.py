@@ -3,8 +3,9 @@ from dash.dependencies import Input, Output
 import dash_bootstrap_components as dbc
 
 from app import app
-import libraries, callbacks
-from layouts import home_layout, fetcher_layout
+import libraries
+from layouts import home_layout, fetcher_layout, painter_layout
+from callbacks import fetcher_callbacks, painter_callback
 
 app.layout = html.Div([
     dcc.Location(id='url', refresh=False),
@@ -23,6 +24,8 @@ app.layout = html.Div([
 def display_page(pathname):
     if pathname == '/fetcher':
         return fetcher_layout.layout
+    elif pathname == "/painter":
+        return painter_layout.layout
     else:
         return home_layout.layout
 
