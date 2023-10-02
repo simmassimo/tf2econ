@@ -1,10 +1,18 @@
 from bs4 import BeautifulSoup
 import time,json
-from requests_html import HTMLSession
-import requests
 from datetime import datetime
+from selenium import webdriver
+from selenium.webdriver.remote.webdriver import WebDriver
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.by import By
+from selenium.common.exceptions import NoSuchElementException
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from urllib.parse import urlencode
+import time
+from requests_html import HTMLSession
 
-API_KEY = '628b33f45f92643cc307cb0e'
+API_KEY = '6507fb3065ea1a68900e9c74'
 
 QUALITIES = {   
     1 : "Genuine",
@@ -13,6 +21,8 @@ QUALITIES = {
     11: "Strange",
     13: "Haunted"
 }
+
+CurrentKeyPrice = 0
 
 def calc_timedelta(created, bump):
     # Calculate the time difference in seconds
@@ -116,8 +126,8 @@ def update_itemlist():
                 elif i == 7:
                     quals.append(13)
         items.append({
-            "name":name,
-            "type":itemType,
+            "name":name.strip(),
+            "type":itemType.strip(),
             "uncraft":uncraft,
             "qualities":quals
         })
@@ -125,43 +135,140 @@ def update_itemlist():
     with open("bptf_items.json","w") as f:
         json.dump(items, f)
 
-def fetch(name,quality,uncraft = False, ks_tier = 0, page_num = 0):
+
+def InitializeSession():
+# Initialize WebDriver
+    options = webdriver.EdgeOptions()
+    session = webdriver.Edge(options=options)
+
+    # Navigate to Steam login page
+    session.get('https://steamcommunity.com/login/home')
+
+
+    login_form = WebDriverWait(session, 10).until(
+        EC.presence_of_element_located((By.CLASS_NAME, "newlogindialog_LoginForm_3Tsg9"))
+    )
+
+    # Locate username and password fields
+    username_field = login_form.find_element(By.CSS_SELECTOR, 'div:nth-child(1) > input') 
+    password_field = login_form.find_element(By.CSS_SELECTOR, 'div:nth-child(2) > input') # Replace with the actual ID or name
+    
+    # Input username and password
+    username_field.send_keys('goleador815')
+    password_field.send_keys('manIcodiscOpa12')
+    password_field.send_keys(Keys.ENTER)
+    WebDriverWait(session, 10).until(EC.url_contains("profiles"))
+    print("INITIALIZED SESSION")
+    return session
+
+def LinkBackpackTF(session):
+    session.get('https://backpack.tf/login')   
+    login = WebDriverWait(session,10).until(EC.presence_of_element_located((By.ID, "imageLogin")))
+    login.click()
+    WebDriverWait(session,10).until(EC.url_contains("backpack"))
+    print("CONNECTED TO BP.TF")
+    return session
+
+def NormalizeCurrency(curr:str):
+    global CurrentKeyPrice
+    if not curr or  curr == '':
+        return -1
+    if curr.find("key") != -1:
+        spl = curr.split("key")
+        if spl[1] and spl[1] != '':
+            ref = spl[1]
+            ref = ref.strip("s,").replace("ref","")
+            if ref:
+                ref = float(ref)
+            else:
+                ref = 0
+        else:
+            ref = 0
+        key = int(spl[0])
+        
+    else:
+        key = 0
+        ref = float(curr.strip().replace("ref",""))
+    return round(key * CurrentKeyPrice + ref,2)
+
+def fetch(session: WebDriver,name: str,quality: int,uncraft: bool = False, ks_tier: int = 0, page_num: int = 1):
+    
     params = {
-        "key": API_KEY,
-        "page_size":30,
-        "page":page_num,
         "item":name,
-        "craftable":0 if uncraft else 1,
         "quality":quality,
-        "killstreak_tier":ks_tier
+        "page":page_num,
+        "craftable": -1 if uncraft else 0
     }
+    params = urlencode(params)
 
-    print("fetching....")
-    get  = requests.get("https://backpack.tf/api/classifieds/search/v1", params=params)
+    response = {
+        "buy":[],
+        "sell":[]
+    }
+    session.get(f"https://backpack.tf/classifieds?{params}")
+    listings = WebDriverWait(session,10).until(EC.presence_of_all_elements_located((By.CLASS_NAME, "media-list")))  
+    sell_listings = listings[0]
+    sells = sell_listings.find_elements(By.CLASS_NAME, "listing")
+    if len(sells) > 0:
+        for s in sells:
+            it = s.find_element(By.CLASS_NAME, "listing-item").find_element(By.TAG_NAME, "div")
+            pr = NormalizeCurrency(it.get_attribute("data-listing_price"))
+            if pr == -1:
+                continue
+            sell = {
+                "steamid":it.get_attribute("data-listing_account_id"),
+                "details":it.get_attribute("data-listing_comment"),
+                "tradeUrl":it.get_attribute("data-listing_offers_url"),
+                "price": pr
+            }
+            sell["attribute"] = "paint" if it.get_attribute("data-paint_name") else "spell" if it.get_attribute("data-spell_1") else "pure"
+            bd = s.find_element(By.CSS_SELECTOR, "div.listing-body")
+            bump = bd.find_element(By.CSS_SELECTOR, "span > span.data1 > time")
+            sell["bumped"] = datetime.fromisoformat(bump.get_attribute("datetime"))
+            listed = bd.find_element(By.CSS_SELECTOR, "span > span.data2 > time")
+            sell["listed"] = datetime.fromisoformat(listed.get_attribute("datetime"))
 
-    if get.status_code == 200:
-        return get.json()
-    elif get.status_code == 429:
-        #too many requests
-        print("HTTP Code 429: Too many requests.")
-        time.sleep(10)
-        return fetch(name,quality,uncraft,ks_tier)
-    else:
-        #unknown error
-        raise Exception(f"Bad Request! HTTP Code: {get.status_code}")
-    
+            response["sell"].append(sell)
+ 
 
-def GetKeyPrices():
-    data = fetch("Mann Co. Supply Crate Key",6)
+
+    buy_listings = listings[1]
+    buys = buy_listings.find_elements(By.CLASS_NAME, "listing")
+    if len(buys) > 0:
+        for b in buys:
+            it = b.find_element(By.CLASS_NAME, "listing-item").find_element(By.TAG_NAME, "div")
+            pr = NormalizeCurrency(it.get_attribute("data-listing_price"))
+            if pr == -1:
+                continue
+            buy = {
+                "steamid":it.get_attribute("data-listing_account_id"),
+                "details":it.get_attribute("data-listing_comment"),
+                "tradeUrl":it.get_attribute("data-listing_offers_url"),
+                "price": pr
+            }
+            if it.get_attribute("data-paint_name"):
+                buy["attribute"] = "paint"  
+            elif it.get_attribute("data-spell_1"):
+                buy["attribute"] = "spell" 
+            elif it.get_attribute("data-part_name_1"): 
+                buy["attribute"] = "parts"
+            else:
+                buy["attribute"] = "pure"
+            bd = b.find_element(By.CSS_SELECTOR, "div.listing-body")
+            bump = bd.find_element(By.CSS_SELECTOR, "span > span.data1 > time")
+            buy["bumped"] = datetime_object = datetime.fromisoformat(bump.get_attribute("datetime"))
+            listed = bd.find_element(By.CSS_SELECTOR, "span > span.data2 > time")
+            buy["listed"] = datetime.fromisoformat(listed.get_attribute("datetime"))
+
+            response["buy"].append(buy)
+
+    return response
+
+def GetKeyPrices(ses):
+    global CurrentKeyPrice
+    data = fetch(ses,"Mann Co. Supply Crate Key",6)
     if data:
-        return float(data["sell"]["listings"][0]["currencies"]["metal"])
-    else:
-        return float(50)
-    
-def NormalizeCurrency(curr):
-    if not curr.get("keys") and not curr.get("metal"):
-        return 0       
-    return curr.get("keys",0) * 50 + curr.get("metal",0)
+        CurrentKeyPrice = float(data["sell"][0]["price"])
 
 class ListingFilter:
     def __init__(self, listings):
@@ -204,33 +311,52 @@ class ListingFilter:
         self.listings = {}
         return l
         
+def GetListings(session:WebDriver,name:str,quality:str,uncraft:bool = False, ks_tier:int = 0, quick:bool = False):
 
-def GetListings(name, quality, uncraft = False, ks_tier = 0, quick = False):
-    results = {"buy":[],"sell":[]}
+    results = {"buy":[],"sell":[]}   
     if quick:
-        raw = fetch(name,quality,uncraft,ks_tier)
+        return fetch(session,name,quality,uncraft,ks_tier)
     else:
-        i = 0
+        i = 1
         while True:
-            raw = fetch(name,quality,uncraft,ks_tier, page_num=i)
-            i += 1
-            if not raw["buy"]["listings"] and not raw["sell"]["listings"]:
+            if i == 1:
+                raw = fetch(session,name,quality,uncraft,ks_tier, page_num=i)
+                i=2
+                continue
+            page = fetch(session,name,quality,uncraft,ks_tier, page_num=i)          
+            if not page["buy"]and not page["sell"]:
                 break
-    essential_keys = ["id","steamid","details","item","created"]
+            else:
+                raw["buy"].extend(page["buy"])
+                raw["sell"].extend(page["sell"])
+            i += 1
+    return raw
 
-    raw_buys = raw["buy"]["listings"]
-    for b in raw_buys:
-        buy = {eskey : b[eskey] for eskey in essential_keys if eskey in b}
-        buy["isBot"] = bool(b.get("automatic", False))
-        buy["price"] = NormalizeCurrency(b.get("currencies"))
-        buy["lastBump"] = calc_timedelta(b["created"], b["bump"])
-        results["buy"].append(buy)
-    
-    raw_sells = raw["sell"]["listings"]
-    for s in raw_sells:
-        sell = {eskey : s[eskey] for eskey in essential_keys if eskey in s}
-        sell["isBot"] = bool(s.get("automatic", False))
-        sell["price"] = NormalizeCurrency(s.get("currencies"))
-        sell["lastbump"] = calc_timedelta(s["created"], s["bump"])
-        results["sell"].append(sell)
-    return results
+def FindOpportunities(ses:WebDriver):
+    print("STARTING")
+    with open(r"C:\Users\Simon\Desktop\TF2Econ\tf2econ\bptf_items.json","r") as f:
+        items = json.load(f)
+        GetKeyPrices(ses)
+        print("ITEMS LOADED")
+        for i in items:
+            if i["type"] == "Type" or i["type"] =="Cosmetic":
+                for q in i["qualities"]:
+                    listings = GetListings(ses,i["name"],q, False, quick=True)
+                    if listings["buy"] and listings["sell"]:
+                        bprice = None
+                        for b in listings["buy"]:
+                            if b["attribute"] == "pure":
+                                bprice = b["price"]
+                                break
+                        if not bprice:
+                            continue
+                        sprice = None
+                        for s in listings["sell"]:
+                            if s["attribute"] == "pure":
+                                sprice = s["price"]
+                                break
+                        if not sprice:
+                            continue
+                        if bprice > sprice:
+                            print(f"Opportunity for {QUALITIES[q]} {i['name']} S {sprice}ref - B {bprice}ref [{round(bprice-sprice,2)} PROFIT ({round(((sprice - bprice)/bprice),2)*100}%)]")
+    return ses

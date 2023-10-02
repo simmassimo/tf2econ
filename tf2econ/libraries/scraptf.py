@@ -3,6 +3,7 @@ import time,json
 from requests_html import HTMLSession
 
 def NormalizeCurrency(curr:str):
+    print(f"converting {curr}")
     if curr.find("key") != -1:
         spl = curr.split("key")
         if spl[1]:
